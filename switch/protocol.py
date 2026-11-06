@@ -1,10 +1,16 @@
 """
 NewsOps Revision 2 - Switch Agent Protocol Client.
 
-Implements HTTP operations and event dispatching according to the official
-Switch Agent Protocol (https://docs.switchagents.ai/switch-rooms/internals/agent-protocol).
+Implements HTTP operations, WebSocket event streaming, and connection state management
+according to the official Switch Agent Protocol (https://docs.switchagents.ai/switch-rooms/internals/agent-protocol).
 
-Handles connection state, credentials check, WebSocket liveness, and clean error reporting.
+Provides:
+- WebSocket event subscription & ping/pong liveness
+- HTTP agent operations & ops discovery
+- Message posting with Markdown & metadata
+- Typing indicators & status updates
+- Room management & participant discovery
+- Resilient reconnection with backoff
 """
 
 import asyncio
@@ -27,6 +33,7 @@ class ConnectionState(str, Enum):
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
     CONNECTED = "connected"
+    RECONNECTING = "reconnecting"
     ERROR = "error"
 
 
@@ -36,12 +43,13 @@ class AgentRegistration:
     name: str
     description: str
     capabilities: List[str] = field(default_factory=list)
+    connector_type: str = "adk"
 
 
 class SwitchProtocolClient:
     """
     Official Switch Agent Protocol Client.
-    Supports HTTP ops and WebSocket event streaming with ping/pong keepalive.
+    Supports HTTP ops, WebSocket event streaming, typing indicators, and discovery.
     """
 
     def __init__(
@@ -61,16 +69,21 @@ class SwitchProtocolClient:
         self.is_configured = bool(self.base_url and self.agent_id and self.token)
         self._ws_task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
+        self.subscribed_rooms: List[str] = []
+        self.supported_ops: List[str] = []
 
     def _headers(self) -> dict:
-        return {
+        headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json",
             "X-Agent-ID": self.agent_id,
         }
+        if self.connection_id:
+            headers["X-Connection-ID"] = self.connection_id
+        return headers
 
     def on(self, event_type: str, handler: Callable):
-        """Register an event listener (e.g. 'message', 'ping', 'connected')."""
+        """Register an event listener (e.g. 'message', 'ping', 'connected', 'handoff')."""
         self._handlers.setdefault(event_type, []).append(handler)
 
     async def _emit(self, event_type: str, data: Any):
@@ -83,7 +96,7 @@ class SwitchProtocolClient:
                 logger.warning(f"Error in Switch event handler ({event_type}): {e}")
 
     async def connect(self) -> bool:
-        """Verifies credentials against Switch server health or agent status."""
+        """Verifies credentials against Switch server health or root endpoint."""
         if not self.is_configured:
             logger.info("SwitchProtocolClient: Credentials not configured. Operating in stub/standby mode.")
             self.state = ConnectionState.DISCONNECTED
@@ -94,7 +107,6 @@ class SwitchProtocolClient:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 res = await client.get(f"{self.base_url}/health", headers=self._headers())
                 if res.status_code == 404:
-                    # Some Switch versions use root or /agents/{id}
                     res = await client.get(f"{self.base_url}/", headers=self._headers())
                 res.raise_for_status()
 
@@ -102,6 +114,9 @@ class SwitchProtocolClient:
             self.connection_id = f"conn-{self.agent_id}-{int(datetime.now(timezone.utc).timestamp())}"
             logger.info(f"Connected to Switch platform (conn: {self.connection_id})")
             await self._emit("connected", {"connection_id": self.connection_id})
+
+            # Automatically discover supported operations
+            await self.discover_operations()
             return True
         except Exception as e:
             self.state = ConnectionState.ERROR
@@ -117,6 +132,43 @@ class SwitchProtocolClient:
         self.connection_id = None
         await self._emit("disconnected", {})
 
+    async def discover_operations(self) -> List[str]:
+        """Discovers supported agent operations from GET /agents/{id}/ops."""
+        if not self.is_configured:
+            return ["post_message", "candidates", "verify", "digest", "publish"]
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                res = await client.get(f"{self.base_url}/agents/{self.agent_id}/ops", headers=self._headers())
+                if res.status_code == 200:
+                    ops_data = res.json()
+                    if isinstance(ops_data, dict):
+                        self.supported_ops = list(ops_data.keys())
+                    elif isinstance(ops_data, list):
+                        self.supported_ops = [str(o) for o in ops_data]
+                    return self.supported_ops
+        except Exception as e:
+            logger.warning(f"Failed to discover Switch operations: {e}")
+        return []
+
+    async def call_operation(self, operation: str, body: dict = None) -> dict:
+        """Invokes a specific Switch operation via POST /agents/{id}/ops/{operation}."""
+        if not self.is_configured:
+            return {"status": "pending_credentials", "operation": operation}
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                res = await client.post(
+                    f"{self.base_url}/agents/{self.agent_id}/ops/{operation}",
+                    json=body or {},
+                    headers=self._headers(),
+                )
+                if res.status_code in (200, 201):
+                    return res.json()
+                return {"status": "error", "status_code": res.status_code, "detail": res.text}
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
     async def register_agent(self, registration: AgentRegistration) -> dict:
         """Registers agent once with Switch according to Agent Protocol."""
         if not self.is_configured:
@@ -129,7 +181,7 @@ class SwitchProtocolClient:
                     json={
                         "name": registration.name,
                         "description": registration.description,
-                        "connector_type": "adk",
+                        "connector_type": registration.connector_type,
                         "integration_profile": {
                             "connection_model": "session_addressable",
                             "message_exchange": True,
@@ -155,11 +207,10 @@ class SwitchProtocolClient:
         """
         if not self.is_configured:
             logger.info(f"Switch post_message (stub): [Room: {room_ref}] {text[:80]}...")
-            return {"status": "pending_credentials", "room_ref": room_ref}
+            return {"status": "pending_credentials", "room_ref": room_ref, "preview": text[:80]}
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                # Primary official endpoint: /agents/{agent_id}/message
                 res = await client.post(
                     f"{self.base_url}/agents/{self.agent_id}/message",
                     json={"room_id": room_ref, "content": text, "metadata": metadata or {}},
@@ -168,7 +219,7 @@ class SwitchProtocolClient:
                 if res.status_code in (200, 201):
                     return res.json()
 
-                # Fallback: /agents/{agent_id}/ops/post_message
+                # Fallback to ops/post_message
                 res = await client.post(
                     f"{self.base_url}/agents/{self.agent_id}/ops/post_message",
                     json={"room_id": room_ref, "content": text},
@@ -182,7 +233,73 @@ class SwitchProtocolClient:
             logger.warning(f"Switch post_message warning: {e}")
             return {"status": "error", "error": str(e)}
 
-    async def start_websocket_listener(self, rooms: List[str] = None):
+    async def set_typing(self, room_ref: str, is_typing: bool = True) -> bool:
+        """Sends typing activity indicator in room."""
+        if not self.is_configured:
+            return True
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                res = await client.post(
+                    f"{self.base_url}/agents/{self.agent_id}/typing",
+                    json={"room_id": room_ref, "typing": is_typing},
+                    headers=self._headers(),
+                )
+                return res.status_code in (200, 204)
+        except Exception:
+            return False
+
+    async def update_status(self, status_text: str) -> bool:
+        """Updates agent runtime status in Switch Console."""
+        if not self.is_configured:
+            return True
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                res = await client.post(
+                    f"{self.base_url}/agents/{self.agent_id}/status",
+                    json={"status": status_text},
+                    headers=self._headers(),
+                )
+                return res.status_code in (200, 204)
+        except Exception:
+            return False
+
+    async def subscribe_room(self, room_id: str) -> bool:
+        """Subscribes the connection to cover events in a room."""
+        if room_id not in self.subscribed_rooms:
+            self.subscribed_rooms.append(room_id)
+        if not self.is_configured:
+            return True
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                res = await client.post(
+                    f"{self.base_url}/agents/{self.agent_id}/connection/subscribe",
+                    json={"room_id": room_id},
+                    headers=self._headers(),
+                )
+                return res.status_code in (200, 204)
+        except Exception as e:
+            logger.warning(f"Failed to subscribe room {room_id}: {e}")
+            return False
+
+    async def get_room_history(self, room_id: str, limit: int = 30) -> List[dict]:
+        """Fetches recent room history from /agents/{id}/rooms/{room_id}/history."""
+        if not self.is_configured:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                res = await client.get(
+                    f"{self.base_url}/agents/{self.agent_id}/rooms/{room_id}/history",
+                    params={"limit": limit},
+                    headers=self._headers(),
+                )
+                if res.status_code == 200:
+                    data = res.json()
+                    return data if isinstance(data, list) else data.get("messages", [])
+        except Exception as e:
+            logger.warning(f"Failed to get room history for {room_id}: {e}")
+        return []
+
+    async def start_websocket_listener(self):
         """
         Connects over WebSocket according to Switch Agent Protocol:
         /agents/{agent_id}/connection/ws with ping/pong and message dispatch.
@@ -224,6 +341,7 @@ class SwitchProtocolClient:
                     break
                 except Exception as e:
                     logger.warning(f"Switch WebSocket disconnected, reconnecting in 5s: {e}")
+                    self.state = ConnectionState.RECONNECTING
                     await asyncio.sleep(5.0)
 
         self._ws_task = asyncio.create_task(_ws_loop())
@@ -235,4 +353,6 @@ class SwitchProtocolClient:
             "agent_id": self.agent_id,
             "connection_id": self.connection_id,
             "is_configured": self.is_configured,
+            "subscribed_rooms": self.subscribed_rooms,
+            "supported_ops": self.supported_ops,
         }

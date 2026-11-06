@@ -84,9 +84,20 @@ class AnalystAgent:
             narrative += "\n" + "\n".join(claim_notes) + "\n\n"
         narrative += f"**Overall Confidence**: {overall_confidence:.2f}"
 
+        story_analysis = StoryAnalysis(
+            summary=narrative[:500] if len(narrative) >= 10 else f"Factual evaluation for {story_id}: {title[:150]}",
+            why_it_matters=f"Verified technical update for {', '.join(topics)} infrastructure.",
+            practical_impact="Enables evaluated tooling adoption with confidence metrics.",
+            affected_users=list(topics),
+            submitted_by=analyst_id,
+            submitted_at=datetime.now(timezone.utc),
+            status=AnalysisStatus.DRAFT,
+        )
+
         submission = AnalysisSubmission(
             analyst_id=analyst_id,
             story_id=story_id,
+            analysis=story_analysis,
             submitted_at=datetime.now(timezone.utc),
             status=AnalysisStatus.DRAFT,
             claims=claims,

@@ -19,6 +19,7 @@ const ROOMS = [
 
 const NAV = [
   { href: '/',            label: 'Inbox' },
+  { href: '/switch',      label: 'Switch Agents' },
   { href: '/activity',    label: 'Activity' },
   { href: '/review',      label: 'Review' },
   { href: '/tools',       label: 'Tools' },

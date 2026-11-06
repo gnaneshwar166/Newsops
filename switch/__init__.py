@@ -7,6 +7,7 @@ from .agents.scout import ScoutAgent
 from .agents.analyst import AnalystSwitchAgent
 from .agents.editor import EditorAgent
 from .orchestrator import SwitchNewsOpsOrchestrator
+from .daemon import run_autonomous_cycle
 
 __all__ = [
     "SwitchProtocolClient",
@@ -16,4 +17,5 @@ __all__ = [
     "AnalystSwitchAgent",
     "EditorAgent",
     "SwitchNewsOpsOrchestrator",
+    "run_autonomous_cycle",
 ]
