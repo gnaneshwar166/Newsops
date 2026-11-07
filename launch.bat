@@ -25,23 +25,36 @@ if "%choice%"=="1" (
 
 if "%choice%"=="2" (
     echo.
-    echo [*] Starting NewsOps Backend on http://localhost:8000...
-    start "NewsOps Backend" cmd /k "python run_backend.py"
-    
-    timeout /t 2 /nobreak >nul
-    
-    echo [*] Starting NewsOps Web Frontend on http://localhost:3000...
-    start "NewsOps Web" cmd /k "cd web && npm run dev"
-    
-    timeout /t 3 /nobreak >nul
-    
+    echo [*] Checking if NewsOps Backend is running on http://localhost:8000...
+    curl -s http://localhost:8000/api/v1/healthz >nul 2>&1
+    if errorlevel 1 (
+        echo [*] Starting NewsOps Backend...
+        start "NewsOps Backend" cmd /k "python run_backend.py"
+        timeout /t 3 /nobreak >nul
+    ) else (
+        echo [OK] Backend is already running on http://localhost:8000
+    )
+
+    echo [*] Checking if NewsOps Web is running on http://localhost:3000...
+    curl -s http://localhost:3000/ >nul 2>&1
+    if errorlevel 1 (
+        echo [*] Starting NewsOps Web Frontend (Next.js)...
+        start "NewsOps Web" cmd /k "cd web && npm run dev"
+        echo [*] Waiting for Next.js dev server to initialize...
+        timeout /t 6 /nobreak >nul
+    ) else (
+        echo [OK] Web Frontend is already running on http://localhost:3000
+    )
+
     echo [*] Opening browser to http://localhost:3000...
     start http://localhost:3000
-    
+
     echo.
+    echo ===================================================
     echo NewsOps is running!
     echo   - Web UI: http://localhost:3000
     echo   - Backend API Docs: http://localhost:8000/docs
+    echo ===================================================
     echo.
     echo Keep the opened command windows running. Close them to stop NewsOps.
     goto end
