@@ -1,3 +1,4 @@
+import os
 """
 NewsOps Revision 2 - Application Settings & Environment Variable Validation.
 
@@ -5,7 +6,7 @@ Uses Pydantic Settings v2 to validate configuration, secure secrets, and
 enforce operational bounds specified in Revision 2 Section 11.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Union
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -84,7 +85,7 @@ class Settings(BaseSettings):
     )
 
     # SSRF Protection Allow-list
-    ALLOWED_FETCH_DOMAINS: List[str] = Field(
+    ALLOWED_FETCH_DOMAINS: Union[List[str], str] = Field(
         default=[
             "github.com",
             "api.github.com",

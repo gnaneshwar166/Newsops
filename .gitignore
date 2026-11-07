@@ -30,12 +30,19 @@ env/
 # Environment files
 .env
 !.env.example
+*.env
+switch_openapi.json
 
 # Node / Next.js
 web/node_modules/
 web/.next/
 web/out/
 web/build/
+web/dist/
+web/.env.local
+web/.env.development.local
+web/.env.test.local
+web/.env.production.local
 *.tsbuildinfo
 
 # Testing & Coverage
@@ -43,6 +50,7 @@ web/build/
 .coverage
 htmlcov/
 coverage/
+.tox/
 
 # OS / IDE
 .DS_Store
@@ -52,6 +60,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.log
+logs/
 
 # Archives & backups
 *.zip
