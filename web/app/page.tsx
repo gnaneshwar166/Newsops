@@ -270,11 +270,15 @@ export default function InboxPage() {
     staleTime: 15_000,
   })
 
-  const { data: stories = [], isLoading } = useQuery({
+  const { data: rawStories = [], isLoading } = useQuery({
     queryKey: keys.stories(),
     queryFn:  () => fetchStories(),
     staleTime: 30_000,
   })
+
+  const stories: Story[] = Array.isArray(rawStories)
+    ? rawStories
+    : (rawStories as any)?.items || (rawStories as any)?.stories || []
 
   const filtered = stories.filter((s: Story) => {
     if (filter === 'Primary')     return s.trust_badge === 'primary'

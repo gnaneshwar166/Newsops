@@ -52,6 +52,7 @@ class RadarItem(BaseModel):
 
 
 @router.get("", response_model=List[RadarItem], summary="List radar items")
+@router.get("/items", response_model=List[RadarItem], summary="List radar items alias")
 async def list_radar(
     room: Optional[str] = Query(None, description="Filter by room key"),
     limit: int = Query(20, ge=1, le=100),

@@ -60,9 +60,13 @@ export interface ClaimItem {
   is_community?: boolean
 }
 
-export const fetchStories = (params?: Record<string, string>) => {
+export const fetchStories = async (params?: Record<string, string>): Promise<Story[]> => {
   const qs = params ? '?' + new URLSearchParams(params).toString() : ''
-  return api.get<Story[]>(`/stories${qs}`)
+  const res = await api.get<any>(`/stories${qs}`)
+  if (Array.isArray(res)) return res
+  if (res && Array.isArray(res.items)) return res.items
+  if (res && Array.isArray(res.stories)) return res.stories
+  return []
 }
 
 export const fetchStory = (id: string) => api.get<Story>(`/stories/${id}`)
