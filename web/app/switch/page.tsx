@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { pushToast } from '@/components/Toast'
+import Shell from '@/components/Shell'
 
 interface SwitchStatus {
   mode: string
@@ -65,7 +66,8 @@ export default function SwitchAgentsPage() {
   })
 
   return (
-    <main style={{ padding: '24px 20px', maxWidth: 1040, margin: '0 auto', width: '100%' }}>
+    <Shell>
+      <div style={{ padding: '24px 20px', maxWidth: 1040, margin: '0 auto', width: '100%' }}>
       {/* Page Title & Status Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
         <div>
@@ -249,6 +251,7 @@ export default function SwitchAgentsPage() {
           </div>
         </div>
       </div>
-    </main>
+      </div>
+    </Shell>
   )
 }
